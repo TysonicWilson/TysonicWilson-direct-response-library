@@ -1,0 +1,9 @@
+{
+  "name": "dr-library-scripts",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "dependencies": {
+    "js-yaml": "^4.1.0"
+  }
+}
