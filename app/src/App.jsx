@@ -6,6 +6,7 @@ import Collections from "./pages/Collections.jsx";
 import MyStudy from "./pages/MyStudy.jsx";
 import Reader from "./pages/Reader.jsx";
 import Compare from "./pages/Compare.jsx";
+import Assembly from "./pages/Assembly.jsx";
 
 const navigation = [
   { to: "/", label: "Home", end: true },
@@ -26,6 +27,7 @@ export default function App() {
           <Route path="/collections" element={<Collections />} />
           <Route path="/study" element={<MyStudy />} />
           <Route path="/compare" element={<Compare />} />
+          <Route path="/assembly" element={<Assembly />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

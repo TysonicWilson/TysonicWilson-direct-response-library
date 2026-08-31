@@ -5,6 +5,7 @@
 const BASE = import.meta.env.BASE_URL; // respects vite base:'./' setting
 
 let indexPromise = null;
+let elementsPromise = null;
 
 export function loadLibraryIndex() {
   if (!indexPromise) {
@@ -14,6 +15,16 @@ export function loadLibraryIndex() {
     });
   }
   return indexPromise;
+}
+
+export function loadElementsIndex() {
+  if (!elementsPromise) {
+    elementsPromise = fetch(`${BASE}corpus/elements-index.json`).then((res) => {
+      if (!res.ok) throw new Error(`Failed to load element index: ${res.status}`);
+      return res.json();
+    });
+  }
+  return elementsPromise;
 }
 
 const mdCache = new Map();
