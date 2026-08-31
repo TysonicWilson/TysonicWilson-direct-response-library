@@ -7,7 +7,7 @@ import {
   toggleCompareSelection,
   MAX_COMPARE,
 } from "../utils/compareSelection.js";
-import { Link } from "react-router-dom";
+import { Link, useSearchParams } from "react-router-dom";
 
 const FILTER_DEFS = [
   { key: "source_collection", label: "Collection" },
@@ -44,9 +44,10 @@ function matchesSearch(item, query) {
 }
 
 export default function LibraryHome() {
+  const [searchParams] = useSearchParams();
   const [items, setItems] = useState(null);
   const [error, setError] = useState(null);
-  const [query, setQuery] = useState("");
+  const [query, setQuery] = useState(() => searchParams.get("q") || "");
   const [filters, setFilters] = useState({});
   const [statusFilter, setStatusFilter] = useState("all");
   const [statuses, setStatuses] = useState({});
@@ -59,6 +60,10 @@ export default function LibraryHome() {
     setStatuses(getAllStudyStatuses());
     setCompareIds(getCompareSelection());
   }, []);
+
+  useEffect(() => {
+    setQuery(searchParams.get("q") || "");
+  }, [searchParams]);
 
   const filterOptions = useMemo(() => {
     if (!items) return {};
@@ -113,10 +118,14 @@ export default function LibraryHome() {
   }
 
   return (
-    <div>
-      <p className="corpus-count">
-        <strong>{items.length}</strong> promotions in the corpus
-      </p>
+    <div className="library-page">
+      <div className="library-heading">
+        <div>
+          <p className="eyebrow">The complete archive</p>
+          <h1>Library</h1>
+        </div>
+        <p className="corpus-count"><strong>{items.length}</strong> promotions in the corpus</p>
+      </div>
 
       <input
         className="search-bar"
