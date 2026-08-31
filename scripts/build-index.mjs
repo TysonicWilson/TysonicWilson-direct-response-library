@@ -50,9 +50,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const BREAKDOWNS_DIR = path.join(ROOT, "corpus", "breakdowns");
 const INDEX_OUT = path.join(ROOT, "corpus", "library-index.json");
+const ELEMENTS_OUT = path.join(ROOT, "corpus", "elements-index.json");
 const MIRROR_DIR = path.join(ROOT, "app", "public", "corpus");
 const MIRROR_BREAKDOWNS_DIR = path.join(MIRROR_DIR, "breakdowns");
 const MIRROR_INDEX_OUT = path.join(MIRROR_DIR, "library-index.json");
+const MIRROR_ELEMENTS_OUT = path.join(MIRROR_DIR, "elements-index.json");
 
 const SOURCE_COLLECTION_MAP = {
   GSL100: "100 Greatest Sales Letters",
@@ -116,12 +118,153 @@ function asStringArray(val) {
   return [String(val)];
 }
 
+const ELEMENT_HEADINGS = [
+  ["lead", /lead analysis|lead type/i],
+  ["subhead", /subhead/i],
+  ["mechanism", /mechanism analysis|mechanism/i],
+  ["proof_stack", /claim.*proof|credibility architecture/i],
+  ["objection_handling", /objections addressed/i],
+  ["guarantee", /guarantee/i],
+  ["offer", /offer architecture/i],
+  ["cta", /close.*cta|close\/cta/i],
+  ["ps", /\bps\b|postscript/i],
+  ["bullet", /dimensionalization/i],
+];
+
+function cleanElementText(markdown) {
+  return markdown
+    .replace(/^##\s+.*$/m, "")
+    .replace(/^###\s+/gm, "")
+    .replace(/\*\*/g, "")
+    .replace(/`/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function splitElementTextAndAnalysis(markdown, fallbackFunction) {
+  let text = cleanElementText(markdown);
+  const read = (label, nextLabels) => {
+    const boundary = nextLabels.length ? `(?=${nextLabels.map((next) => `\\*?${next}:`).join("|")}|$)` : "$";
+    const match = text.match(new RegExp(`\\*?${label}:\\*?\\s*([\\s\\S]*?)${boundary}`, "i"));
+    return match?.[1]?.trim() || null;
+  };
+  const analysis = {
+    function: read("Function", ["Key Move", "Why It Matters"]) || fallbackFunction,
+    key_move: read("Key Move", ["Why It Matters"]),
+    why_it_matters: read("Why It Matters", []),
+  };
+  text = text
+    .replace(/\*?Function:\*?\s*[\s\S]*?(?=\*?(?:Key Move|Why It Matters):|$)/i, "")
+    .replace(/\*?Key Move:\*?\s*[\s\S]*?(?=\*?Why It Matters:|$)/i, "")
+    .replace(/\*?Why It Matters:\*?\s*[\s\S]*$/i, "")
+    .trim();
+  return { text, analysis };
+}
+
+function sectionBlocks(body) {
+  const matches = [...body.matchAll(/^##\s+(.+?)\s*$/gm)];
+  return matches.map((match, index) => ({
+    heading: match[1].trim(),
+    text: body.slice(match.index, index + 1 < matches.length ? matches[index + 1].index : body.length),
+  }));
+}
+
+function classifyElementHeading(heading) {
+  return ELEMENT_HEADINGS.find(([, pattern]) => pattern.test(heading))?.[0] || null;
+}
+
+function provenanceFor(record) {
+  return record.id?.startsWith("HOF-") ? "Known control" : "Unknown";
+}
+
+function structuralElementType(label) {
+  const value = label.toLowerCase();
+  if (/headline|hook|qualifying question|big idea statement/.test(value)) return "lead";
+  if (/subhead/.test(value)) return "subhead";
+  if (/bullet|cascade|content preview/.test(value)) return "bullet";
+  if (/mechanism|objectivity|convenience/.test(value)) return "mechanism";
+  if (/proof|credibility|value framing/.test(value)) return "proof_stack";
+  if (/objection|reframe/.test(value)) return "objection_handling";
+  if (/guarantee|risk reversal/.test(value)) return "guarantee";
+  if (/offer|price/.test(value)) return "offer";
+  if (/close|cta|action/.test(value)) return "cta";
+  if (/\bps\b|postscript/.test(value)) return "ps";
+  return null;
+}
+
+function extractStructuralElements(record, body, counters) {
+  const block = sectionBlocks(body).find(({ heading }) => /structural map/i.test(heading));
+  if (!block) return [];
+  const pattern = /^\d+\.\s+\*\*(.+?)\*\*\s+—\s+([\s\S]*?)(?=\n\d+\.\s+\*\*|\n\n\*\*Compressed|$)/gm;
+  return [...block.text.matchAll(pattern)].flatMap((match) => {
+    const label = match[1].trim();
+    const elementType = structuralElementType(label);
+    if (!elementType) return [];
+    const count = (counters.get(elementType) || 0) + 1;
+    counters.set(elementType, count);
+    const split = splitElementTextAndAnalysis(match[2], label);
+    return split.text ? [{
+      element_id: `${record.id}__${elementType}-${count}`,
+      letter_id: record.id,
+      element_type: elementType,
+      text: split.text,
+      analysis: split.analysis,
+      lead_type: record.leadTypeNormalized,
+      awareness: record.awareness,
+      market: record.market,
+      mechanism: record.mechanism_type,
+      provenance: provenanceFor(record),
+      annotated: true,
+    }] : [];
+  });
+}
+
+function extractHeadline(record, body) {
+  const candidate = sectionBlocks(body).find(({ heading }) => /headline/i.test(heading));
+  if (!candidate) return null;
+  const quoted = candidate.text.match(/[“"]([^”"]{12,})[”"]/);
+  if (!quoted) return null;
+  const split = splitElementTextAndAnalysis(quoted[1], candidate.heading);
+  return split.text ? {
+    element_id: `${record.id}__headline`, letter_id: record.id, element_type: "headline", text: split.text, analysis: split.analysis,
+    lead_type: record.leadTypeNormalized, awareness: record.awareness, market: record.market, mechanism: record.mechanism_type,
+    provenance: provenanceFor(record), annotated: true,
+  } : null;
+}
+
+function extractElements(record, body) {
+  const counters = new Map();
+  const headline = extractHeadline(record, body);
+  if (headline) counters.set("headline", 1);
+  return [...(headline ? [headline] : []), ...extractStructuralElements(record, body, counters), ...sectionBlocks(body).flatMap(({ heading, text }) => {
+    const elementType = classifyElementHeading(heading);
+    if (!elementType || !cleanElementText(text)) return [];
+    const count = (counters.get(elementType) || 0) + 1;
+    counters.set(elementType, count);
+    const split = splitElementTextAndAnalysis(text, heading);
+    return split.text ? [{
+      element_id: `${record.id}__${elementType}${count > 1 ? `-${count}` : ""}`,
+      letter_id: record.id,
+      element_type: elementType,
+      text: split.text,
+      analysis: split.analysis,
+      lead_type: record.leadTypeNormalized,
+      awareness: record.awareness,
+      market: record.market,
+      mechanism: record.mechanism_type,
+      provenance: provenanceFor(record),
+      annotated: true,
+    }] : [];
+  })];
+}
+
 function main() {
   const warnings = [];
   const failed = [];
   const missingTitles = [];
   const idCounts = new Map();
   const records = [];
+  const elements = [];
 
   if (!fs.existsSync(BREAKDOWNS_DIR)) {
     console.error(`Breakdowns directory not found: ${BREAKDOWNS_DIR}`);
@@ -204,6 +347,7 @@ function main() {
     };
 
     records.push(record);
+    elements.push(...extractElements(record, split.body));
   }
 
   const duplicateIds = [...idCounts.entries()]
@@ -234,6 +378,7 @@ function main() {
 
   fs.mkdirSync(path.dirname(INDEX_OUT), { recursive: true });
   fs.writeFileSync(INDEX_OUT, JSON.stringify(records, null, 2), "utf8");
+  fs.writeFileSync(ELEMENTS_OUT, JSON.stringify(elements, null, 2), "utf8");
 
   // Mirror into app/public/corpus (idempotent: clear and recopy breakdowns dir)
   fs.mkdirSync(MIRROR_BREAKDOWNS_DIR, { recursive: true });
@@ -251,6 +396,7 @@ function main() {
     fs.copyFileSync(path.join(BREAKDOWNS_DIR, file), path.join(MIRROR_BREAKDOWNS_DIR, file));
   }
   fs.writeFileSync(MIRROR_INDEX_OUT, JSON.stringify(records, null, 2), "utf8");
+  fs.writeFileSync(MIRROR_ELEMENTS_OUT, JSON.stringify(elements, null, 2), "utf8");
 
   // Report
   console.log(`Total breakdown files found: ${files.length}`);
@@ -259,6 +405,7 @@ function main() {
   console.log(`Duplicate IDs: ${duplicateIds.length ? duplicateIds.join(", ") : "none"}`);
   console.log(`Missing titles: ${missingTitles.length ? missingTitles.join("; ") : "none"}`);
   console.log(`Metadata warnings: ${warnings.length ? warnings.join("; ") : "none"}`);
+  console.log(`Atomic elements extracted: ${elements.length}`);
 
   if (failed.length > 0 || duplicateIds.length > 0 || missingTitles.length > 0) {
     process.exitCode = 0; // still write output, but signal issues via non-empty report

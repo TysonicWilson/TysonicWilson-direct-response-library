@@ -124,7 +124,7 @@ export default function LibraryHome() {
           <p className="eyebrow">The complete archive</p>
           <h1>Library</h1>
         </div>
-        <p className="corpus-count"><strong>{items.length}</strong> promotions in the corpus</p>
+        <div className="library-heading-actions"><p className="corpus-count"><strong>{items.length}</strong> promotions in the corpus</p><Link to="/assembly" className="text-action">Open parts menu <span>→</span></Link></div>
       </div>
 
       <input
